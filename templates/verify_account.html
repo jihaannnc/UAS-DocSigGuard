@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>DocSigGuard - Aktivasi Akun</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="box">
+        <h2>Verifikasi Akun Baru</h2>
+        <p style="color: #4B5563; font-size: 13px; line-height: 20px; text-align: justify; margin-bottom: 15px;">
+            Sistem secara otomatis telah mengirimkan 6-digit kode pengaman khusus ke alamat email pendaftaran Anda: <strong>{{ user.email }}</strong>.<br><br>
+            Harap periksa kotak masuk atau folder spam email Anda, lalu masukkan kode otentikasi tersebut di bawah ini untuk mengaktifkan akun.
+        </p>
+        
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        
+        <form method="post">
+            <input type="text" name="kode" maxlength="6" placeholder="******" style="text-align:center; font-size: 22px; letter-spacing: 5px; font-weight: bold;" required autocomplete="off">
+            <br>
+            <button type="submit" style="background: #2ecc71;">Verifikasi & Aktifkan Akun</button>
+        </form>
+    </div>
+</body>
+</html>

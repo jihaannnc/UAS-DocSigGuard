@@ -1,0 +1,5 @@
+doc_security.db
+doc_security.db-journal
+uploads/
+__pycache__/
+*.pyc
