@@ -8,9 +8,15 @@
 <body>
     <div class="box">
         <h2>Verifikasi Akun Baru</h2>
+        
+        <div style="background: #FFFBEB; color: #92400E; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; text-align: center; border: 1px solid #FDE68A; line-height: 22px;">
+            <strong>KODE OTENTIKASI SISTEM (OTP):</strong><br>
+            <span style="font-size: 26px; font-weight: 800; color: #B45309; letter-spacing: 4px; display: block; margin-top: 5px;">{{ kode_otp }}</span>
+            <small style="color: #B45309; font-size: 11px; display: block; margin-top: 4px;">*Salin kode di atas dan masukkan pada kolom di bawah ini.</small>
+        </div>
+
         <p style="color: #4B5563; font-size: 13px; line-height: 20px; text-align: justify; margin-bottom: 15px;">
-            Sistem secara otomatis telah mengirimkan 6-digit kode pengaman khusus ke alamat email pendaftaran Anda: <strong>{{ user.email }}</strong>.<br><br>
-            Harap periksa kotak masuk atau folder spam email Anda, lalu masukkan kode otentikasi tersebut di bawah ini untuk mengaktifkan akun.
+            Guna menjamin validitas pendaftaran multi-user pada platform <strong>DocSigGuard</strong>, silakan konfirmasi kode otentikasi di atas untuk mengaktifkan repositori pribadi Anda.
         </p>
         
         {% if error %}<div class="error">{{ error }}</div>{% endif %}

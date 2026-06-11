@@ -5,8 +5,6 @@ import sqlite3
 import datetime
 import qrcode
 import random
-import smtplib
-from email.mime.text import MIMEText
 from io import BytesIO
 
 from reportlab.lib.pagesizes import letter
@@ -23,10 +21,6 @@ if os.path.exists('/data'):
     DB_NAME = "/data/doc_security.db"
 else:
     DB_NAME = "doc_security.db"
-
-# --- KREDENSIAL EMAIL PENGIRIM OTP (SUDAH DISESUAIKAN) ---
-EMAIL_PENGIRIM = "cyberareajiji@gmail.com"  
-EMAIL_PASSWORD = "fukoehqnfnoziiax" 
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -68,39 +62,6 @@ def init_db():
 # Jalankan inisialisasi basis data
 init_db()
 
-# --- SOLUSI REGISTER STUCK: Menggunakan SMTP TLS Port 587 (Cloud Friendly) ---
-def kirim_email_token(email_tujuan, username, kode):
-    """Mengirimkan kode OTP 6-digit dengan penanganan error cloud yang lebih tangguh"""
-    subjek = "Kode Verifikasi Pendaftaran Akun DocSigGuard"
-    isi_surat = (
-        f"Halo {username},\n\n"
-        f"Terima kasih telah melakukan registrasi pada sistem DocSigGuard.\n\n"
-        f"Berikut adalah kode keamanan untuk mengaktifkan akun Anda:\n"
-        f"KODE VERIFIKASI: {kode}\n\n"
-        f"Silakan masukkan kode di atas pada halaman verifikasi sistem."
-    )
-    
-    msg = MIMEText(isi_surat)
-    msg['Subject'] = subjek
-    msg['From'] = EMAIL_PENGIRIM
-    msg['To'] = email_tujuan
-
-    try:
-        # Konfigurasi koneksi SMTP yang stabil untuk lingkungan server cloud
-        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=15)
-        server.set_debuglevel(1) 
-        server.ehlo()
-        server.starttls() 
-        server.ehlo()
-        server.login(EMAIL_PENGIRIM, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_PENGIRIM, email_tujuan, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"CRITICAL SMTP ERROR LOG: {str(e)}") 
-        return False
-
-
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if 'user_id' in session:
@@ -117,6 +78,8 @@ def register():
             return render_template('register.html', error=error)
 
         hashed_password = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        
+        # Pembuatan Kode OTP acak 6-digit oleh sistem internal
         kode_token = str(random.randint(100000, 999999))
         
         conn = get_db_connection()
@@ -130,17 +93,10 @@ def register():
             user_id = cursor.lastrowid
             conn.close()
             
-            # Kirim email token secara aman via Port 587 TLS
-            email_terkirim = kirim_email_token(email, username, kode_token)
-            if email_terkirim:
-                return redirect(url_for('verify_account', user_id=user_id))
-            else:
-                # Rollback jika email gagal terkirim agar user bisa mendaftar ulang
-                conn = get_db_connection()
-                conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
-                conn.commit()
-                conn.close()
-                error = "Sistem gagal mengirimkan kode verifikasi ke email Anda. Coba lagi nanti."
+            # Simpan kode token ke session sementara agar bisa ditampilkan di halaman verifikasi
+            session['tampilan_otp_buat_user'] = kode_token
+            return redirect(url_for('verify_account', user_id=user_id))
+            
         except sqlite3.IntegrityError:
             error = "Username atau Alamat Email sudah terdaftar dalam sistem DocSigGuard."
             try: conn.close()
@@ -158,18 +114,23 @@ def verify_account(user_id):
         conn.close()
         return "Pengguna tidak ditemukan dalam sistem.", 404
         
+    # Ambil kode OTP dari session untuk ditampilkan di layar halaman verifikasi
+    kode_tampil = session.get('tampilan_otp_buat_user', user['kode_verifikasi'])
+        
     if request.method == 'POST':
         input_kode = request.form.get('kode', '').strip()
         if input_kode == user['kode_verifikasi']:
             conn.execute('UPDATE users SET status = ?, kode_verifikasi = NULL WHERE id = ?', ('ACTIVE', user_id))
             conn.commit()
             conn.close()
+            # Hapus session OTP setelah berhasil digunakan
+            session.pop('tampilan_otp_buat_user', None)
             return redirect(url_for('login'))
         else:
-            error = "Kode keamanan yang Anda masukkan keliru. Periksa kotak masuk/spam email Anda."
+            error = "Kode keamanan yang Anda masukkan keliru. Silakan periksa kembali kode di atas."
             
     conn.close()
-    return render_template('verify_account.html', user=user, error=error)
+    return render_template('verify_account.html', user=user, error=error, kode_otp=kode_tampil)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -192,7 +153,7 @@ def login():
             session['username'] = user['username']
             return redirect(url_for('index'))
         else:
-            error = "Kredensial salah atau akun Anda belum diverifikasi via OTP Email."
+            error = "Kredensial salah atau akun Anda belum diverifikasi via OTP."
             
     return render_template('login.html', error=error)
 
@@ -247,7 +208,6 @@ def index():
     conn.close()
     return render_template('response.html', history=history)
 
-# --- VALIDASI KEAMANAN TINGGI: Menghapus berkas wajib mencocokkan user_id ---
 @app.route('/delete/<int:item_id>')
 def delete_item(item_id):
     if 'user_id' not in session:
@@ -259,7 +219,6 @@ def delete_item(item_id):
     conn.close()
     return redirect(url_for('index'))
 
-# --- VALIDASI KEAMANAN TINGGI: Ekspor Sertifikat PDF mencocokkan user_id pemilik asli ---
 @app.route('/export-pdf/<int:item_id>')
 def export_pdf(item_id):
     if 'user_id' not in session:
