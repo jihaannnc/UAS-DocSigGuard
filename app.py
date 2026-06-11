@@ -18,13 +18,15 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.secret_key = os.urandom(24)
 
+# --- PROTEKSI DATABASE: Persistent Volume di Cloud / Lokal ---
 if os.path.exists('/data'):
     DB_NAME = "/data/doc_security.db"
 else:
     DB_NAME = "doc_security.db"
 
+# --- KREDENSIAL EMAIL PENGIRIM OTP (SUDAH DISESUAIKAN) ---
 EMAIL_PENGIRIM = "cyberareajiji@gmail.com"  
-EMAIL_PASSWORD = "ugoujjnqrjelybgy" 
+EMAIL_PASSWORD = "fukoehqnfnoziiax" 
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -63,10 +65,12 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Jalankan inisialisasi basis data
 init_db()
 
+# --- SOLUSI REGISTER STUCK: Menggunakan SMTP TLS Port 587 (Cloud Friendly) ---
 def kirim_email_token(email_tujuan, username, kode):
-    """Mengirimkan kode OTP 6-digit menggunakan protokol TLS 587 agar tidak diblokir network Railway"""
+    """Mengirimkan kode OTP 6-digit dengan penanganan error cloud yang lebih tangguh"""
     subjek = "Kode Verifikasi Pendaftaran Akun DocSigGuard"
     isi_surat = (
         f"Halo {username},\n\n"
@@ -82,16 +86,18 @@ def kirim_email_token(email_tujuan, username, kode):
     msg['To'] = email_tujuan
 
     try:
-        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
+        # Konfigurasi koneksi SMTP yang stabil untuk lingkungan server cloud
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=15)
+        server.set_debuglevel(1) 
         server.ehlo()
-        server.starttls()
+        server.starttls() 
         server.ehlo()
         server.login(EMAIL_PENGIRIM, EMAIL_PASSWORD)
         server.sendmail(EMAIL_PENGIRIM, email_tujuan, msg.as_string())
         server.quit()
         return True
     except Exception as e:
-        print(f"SMTP Log Error: {str(e)}") 
+        print(f"CRITICAL SMTP ERROR LOG: {str(e)}") 
         return False
 
 
@@ -129,7 +135,7 @@ def register():
             if email_terkirim:
                 return redirect(url_for('verify_account', user_id=user_id))
             else:
-                # Rollback jika email gagal terkirim agar user bisa mendaftar ulang dengan email yang sama
+                # Rollback jika email gagal terkirim agar user bisa mendaftar ulang
                 conn = get_db_connection()
                 conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
                 conn.commit()
@@ -196,6 +202,7 @@ def logout():
     return redirect(url_for('login'))
 
 
+# --- PROTEKSI MULTI-USER: Menjamin data histori tidak bocor ke orang asing ---
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if 'user_id' not in session:
@@ -203,6 +210,7 @@ def index():
         
     conn = get_db_connection()
     cursor = conn.cursor()
+
     current_user = cursor.execute('SELECT * FROM users WHERE id = ? AND status = ?', (session['user_id'], 'ACTIVE')).fetchone()
     if not current_user:
         conn.close()
@@ -233,11 +241,13 @@ def index():
             conn.close()
             return redirect(url_for('index'))
 
+    # Hanya mengambil histori milik user yang login aktif
     history = cursor.execute('SELECT * FROM berkas_autentikasi WHERE user_id = ? ORDER BY id DESC', 
                              (session['user_id'],)).fetchall()
     conn.close()
     return render_template('response.html', history=history)
 
+# --- VALIDASI KEAMANAN TINGGI: Menghapus berkas wajib mencocokkan user_id ---
 @app.route('/delete/<int:item_id>')
 def delete_item(item_id):
     if 'user_id' not in session:
@@ -249,6 +259,7 @@ def delete_item(item_id):
     conn.close()
     return redirect(url_for('index'))
 
+# --- VALIDASI KEAMANAN TINGGI: Ekspor Sertifikat PDF mencocokkan user_id pemilik asli ---
 @app.route('/export-pdf/<int:item_id>')
 def export_pdf(item_id):
     if 'user_id' not in session:
