@@ -17,7 +17,11 @@ from reportlab.lib import colors
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.secret_key = os.urandom(24)
-DB_NAME = "doc_security.db"
+
+if os.path.exists('/data'):
+    DB_NAME = "/data/doc_security.db"
+else:
+    DB_NAME = "doc_security.db"
 
 EMAIL_PENGIRIM = "cyberareajiji@gmail.com"  
 EMAIL_PASSWORD = "ugoujjnqrjelybgy" 
@@ -30,7 +34,7 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """Menginisialisasi struktur tabel internal basis data"""
+    """Membuat tabel jika belum ada saat aplikasi pertama kali dijalankan"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -60,16 +64,16 @@ def init_db():
     conn.close()
 
 init_db()
-
+-
 def kirim_email_token(email_tujuan, username, kode):
-    """Mengirimkan kode validasi 6-digit otomatis ke email anda"""
+    """Mengirimkan kode OTP 6-digit menggunakan protokol TLS 587 agar tidak diblokir network Railway"""
     subjek = "Kode Verifikasi Pendaftaran Akun DocSigGuard"
     isi_surat = (
         f"Halo {username},\n\n"
         f"Terima kasih telah melakukan registrasi pada sistem DocSigGuard.\n\n"
         f"Berikut adalah kode keamanan untuk mengaktifkan akun Anda:\n"
         f"KODE VERIFIKASI: {kode}\n\n"
-        f"Silakan masukkan kode di atas pada halaman verifikasi sistem untuk menyelesaikan proses pendaftaran."
+        f"Silakan masukkan kode di atas pada halaman verifikasi sistem."
     )
     
     msg = MIMEText(isi_surat)
@@ -78,11 +82,16 @@ def kirim_email_token(email_tujuan, username, kode):
     msg['To'] = email_tujuan
 
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_PENGIRIM, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_PENGIRIM, email_tujuan, msg.as_string())
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(EMAIL_PENGIRIM, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_PENGIRIM, email_tujuan, msg.as_string())
+        server.quit()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"SMTP Log Error: {str(e)}") 
         return False
 
 
@@ -97,13 +106,16 @@ def register():
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '')
         
+        if not username or not email or not password:
+            error = "Semua bidang formulir wajib diisi!"
+            return render_template('register.html', error=error)
+
         hashed_password = hashlib.sha256(password.encode('utf-8')).hexdigest()
         kode_token = str(random.randint(100000, 999999))
         
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            
             cursor.execute('''
                 INSERT INTO users (username, email, password, status, kode_verifikasi) 
                 VALUES (?, ?, ?, ?, ?)
@@ -112,14 +124,21 @@ def register():
             user_id = cursor.lastrowid
             conn.close()
             
+            # Kirim email token secara aman via Port 587 TLS
             email_terkirim = kirim_email_token(email, username, kode_token)
             if email_terkirim:
                 return redirect(url_for('verify_account', user_id=user_id))
             else:
-                error = "Gagal mengirimkan email verifikasi. Periksa kembali setelan sandi aplikasi Anda."
+                # Rollback jika email gagal terkirim agar user bisa mendaftar ulang dengan email yang sama
+                conn = get_db_connection()
+                conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+                conn.commit()
+                conn.close()
+                error = "Sistem gagal mengirimkan kode verifikasi ke email Anda. Coba lagi nanti."
         except sqlite3.IntegrityError:
-            error = "Username atau Alamat Email sudah terdaftar di dalam sistem."
-            conn.close()
+            error = "Username atau Alamat Email sudah terdaftar dalam sistem DocSigGuard."
+            try: conn.close()
+            except: pass
             
     return render_template('register.html', error=error)
 
@@ -131,18 +150,17 @@ def verify_account(user_id):
     
     if not user:
         conn.close()
-        return "Pengguna tidak ditemukan.", 404
+        return "Pengguna tidak ditemukan dalam sistem.", 404
         
     if request.method == 'POST':
         input_kode = request.form.get('kode', '').strip()
         if input_kode == user['kode_verifikasi']:
-            
             conn.execute('UPDATE users SET status = ?, kode_verifikasi = NULL WHERE id = ?', ('ACTIVE', user_id))
             conn.commit()
             conn.close()
             return redirect(url_for('login'))
         else:
-            error = "Kode keamanan yang Anda masukkan tidak valid. Silakan periksa kembali email Anda."
+            error = "Kode keamanan yang Anda masukkan keliru. Periksa kotak masuk/spam email Anda."
             
     conn.close()
     return render_template('verify_account.html', user=user, error=error)
@@ -159,10 +177,8 @@ def login():
         hashed_password = hashlib.sha256(password.encode('utf-8')).hexdigest()
         
         conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        user = cursor.execute('SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ? AND status = ?', 
-                              (username_or_email, username_or_email, hashed_password, 'ACTIVE')).fetchone()
+        user = conn.execute('SELECT * FROM users WHERE (username = ? OR email = ?) AND password = ? AND status = ?', 
+                            (username_or_email, username_or_email, hashed_password, 'ACTIVE')).fetchone()
         conn.close()
         
         if user:
@@ -170,7 +186,7 @@ def login():
             session['username'] = user['username']
             return redirect(url_for('index'))
         else:
-            error = "Username, email, atau password salah, atau akun Anda belum diaktifkan melalui verifikasi."
+            error = "Kredensial salah atau akun Anda belum diverifikasi via OTP Email."
             
     return render_template('login.html', error=error)
 
@@ -182,13 +198,11 @@ def logout():
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-   
     if 'user_id' not in session:
         return redirect(url_for('login'))
         
     conn = get_db_connection()
     cursor = conn.cursor()
-
     current_user = cursor.execute('SELECT * FROM users WHERE id = ? AND status = ?', (session['user_id'], 'ACTIVE')).fetchone()
     if not current_user:
         conn.close()
@@ -209,7 +223,6 @@ def index():
             with open(filepath, 'rb') as f:
                 file_bytes = f.read()
             sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             cursor.execute('''
@@ -236,28 +249,17 @@ def delete_item(item_id):
     conn.close()
     return redirect(url_for('index'))
 
-@app.route('/clear-all')
-def clear_all():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-        
-    conn = get_db_connection()
-    conn.execute('DELETE FROM berkas_autentikasi WHERE user_id = ?', (session['user_id'],))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('index'))
-
 @app.route('/export-pdf/<int:item_id>')
 def export_pdf(item_id):
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    target_item = conn.execute('SELECT * FROM berkas_autentikasi WHERE id = ?', (item_id,)).fetchone()
+    target_item = conn.execute('SELECT * FROM berkas_autentikasi WHERE id = ? AND user_id = ?', (item_id, session['user_id'])).fetchone()
     conn.close()
     
     if not target_item:
-        return "Dokumen tidak ditemukan", 404
+        return "Akses Ditolak: Anda tidak berwenang melihat atau mengunduh sertifikat dokumen ini.", 403
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54)
@@ -308,10 +310,10 @@ def export_pdf(item_id):
     story.append(Spacer(1, 20))
 
     qr_isi_scan = (
-        f"[ VERIFIKASI DOCSIGGUARD ] "
-        f"Status: VALID & TERAUTENTIKASI | "
-        f"Berkas: {target_item['filename']} | "
-        f"Hash: {target_item['hash']} | "
+        f"[ VERIFIKASI DOCSIGGUARD ]\n"
+        f"Status: VALID & TERAUTENTIKASI\n"
+        f"Berkas: {target_item['filename']}\n"
+        f"Hash SHA-256: {target_item['hash']}\n"
         f"Sistem Pengembang: Jihan Fitria Nur Anisa"
     )
     
@@ -326,7 +328,7 @@ def export_pdf(item_id):
     qr_reportlab_img = Image(qr_buffer, width=95, height=95)
 
     ttd_html_text = f"""<br/>
-    Dokumen ini telah dinyatakan sah, aman, and terautentikasi secara digital oleh sistem:<br/>
+    Dokumen ini telah dinyatakan sah, aman, dan terautentikasi secara digital oleh sistem:<br/>
     <font color="#9D174D" size="11"><b>DocSigGuard System Validation</b></font><br/>
     <font color="#777777" size="8.5">Sistem Validasi Keamanan Kriptografi</font><br/>
     <font color="#555555" size="8">Dikembangkan oleh: <b>JIHAN FITRIA NUR ANISA</b></font>
