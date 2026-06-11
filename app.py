@@ -64,7 +64,7 @@ def init_db():
     conn.close()
 
 init_db()
--
+
 def kirim_email_token(email_tujuan, username, kode):
     """Mengirimkan kode OTP 6-digit menggunakan protokol TLS 587 agar tidak diblokir network Railway"""
     subjek = "Kode Verifikasi Pendaftaran Akun DocSigGuard"
